@@ -1,3 +1,4 @@
+require('dotenv').config();
 const { Pool } = require('pg');
 const { v4: uuidv4 } = require('uuid');
 
@@ -16,6 +17,7 @@ async function runMigrations() {
   
   try {
     console.log('🚀 מתחיל הרצת מיגרציות PostgreSQL/Supabase...');
+    console.log(`🔗 מתחבר לשרת: ${process.env.DB_HOST}:${process.env.DB_PORT}`);
     
     // Create migrations table if it doesn't exist
     await client.query(`

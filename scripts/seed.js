@@ -1,3 +1,4 @@
+require('dotenv').config();
 const bcrypt = require('bcryptjs');
 const { Pool } = require('pg');
 const { v4: uuidv4 } = require('uuid');
@@ -17,6 +18,7 @@ async function seedDatabase() {
   
   try {
     console.log('🌱 מתחיל זריעת נתוני דמו...');
+    console.log(`🔗 מתחבר לשרת: ${process.env.DB_HOST}:${process.env.DB_PORT}`);
     
     // Check if demo user already exists
     const existingUser = await client.query(
