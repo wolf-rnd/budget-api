@@ -1,14 +1,26 @@
 const bcrypt = require('bcryptjs');
-const { query, run, close } = require('../config/database');
+const { Pool } = require('pg');
 const { v4: uuidv4 } = require('uuid');
 
+// יצירת חיבור ישיר למסד הנתונים
+const pool = new Pool({
+  host: process.env.DB_HOST,
+  port: process.env.DB_PORT || 5432,
+  database: process.env.DB_NAME,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+});
+
 async function seedDatabase() {
+  const client = await pool.connect();
+  
   try {
     console.log('🌱 מתחיל זריעת נתוני דמו...');
     
     // Check if demo user already exists
-    const existingUser = await query(
-      'SELECT id FROM users WHERE email = ?',
+    const existingUser = await client.query(
+      'SELECT id FROM users WHERE email = $1',
       ['demo@example.com']
     );
     
@@ -21,9 +33,9 @@ async function seedDatabase() {
     const passwordHash = await bcrypt.hash('demo123', 12);
     const userId = uuidv4();
     
-    await run(
+    await client.query(
       `INSERT INTO users (id, email, password_hash, first_name, last_name) 
-       VALUES (?, ?, ?, ?, ?)`,
+       VALUES ($1, $2, $3, $4, $5)`,
       [userId, 'demo@example.com', passwordHash, 'נעמי', 'מסינג']
     );
     
@@ -33,22 +45,22 @@ async function seedDatabase() {
     const currentYear = new Date().getFullYear();
     const budgetYearId = uuidv4();
     
-    await run(
+    await client.query(
       `INSERT INTO budget_years (id, user_id, name, start_date, end_date, is_active)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+       VALUES ($1, $2, $3, $4, $5, $6)`,
       [budgetYearId, userId, `01/${currentYear.toString().slice(-2)} - 12/${currentYear.toString().slice(-2)}`, 
-       `${currentYear}-01-01`, `${currentYear}-12-31`, 1]
+       `${currentYear}-01-01`, `${currentYear}-12-31`, true]
     );
     
     console.log('📅 שנת תקציב נוצרה:', budgetYearId);
     
     // Create funds
     const funds = [
-      { name: 'קופת שוטף', type: 'monthly', level: 1, include_in_budget: 1, amount: 3000, amount_given: 2500 },
-      { name: 'תקציב שנתי', type: 'annual', level: 2, include_in_budget: 1, amount: 50000, spent: 20000 },
-      { name: 'תקציב מורחב', type: 'annual', level: 2, include_in_budget: 1, amount: 30000, spent: 15000 },
-      { name: 'בונוסים', type: 'savings', level: 3, include_in_budget: 0, amount: 12000 },
-      { name: 'עודפים', type: 'savings', level: 3, include_in_budget: 0, amount: 8500 }
+      { name: 'קופת שוטף', type: 'monthly', level: 1, include_in_budget: true, amount: 3000, amount_given: 2500 },
+      { name: 'תקציב שנתי', type: 'annual', level: 2, include_in_budget: true, amount: 50000, spent: 20000 },
+      { name: 'תקציב מורחב', type: 'annual', level: 2, include_in_budget: true, amount: 30000, spent: 15000 },
+      { name: 'בונוסים', type: 'savings', level: 3, include_in_budget: false, amount: 12000 },
+      { name: 'עודפים', type: 'savings', level: 3, include_in_budget: false, amount: 8500 }
     ];
     
     const fundIds = {};
@@ -56,16 +68,16 @@ async function seedDatabase() {
       const fundId = uuidv4();
       fundIds[fund.name] = fundId;
       
-      await run(
+      await client.query(
         `INSERT INTO funds (id, user_id, name, type, level, include_in_budget)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+         VALUES ($1, $2, $3, $4, $5, $6)`,
         [fundId, userId, fund.name, fund.type, fund.level, fund.include_in_budget]
       );
       
       // Create fund budget
-      await run(
+      await client.query(
         `INSERT INTO fund_budgets (id, fund_id, budget_year_id, amount, amount_given, spent)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+         VALUES ($1, $2, $3, $4, $5, $6)`,
         [uuidv4(), fundId, budgetYearId, fund.amount, fund.amount_given || null, fund.spent || null]
       );
     }
@@ -99,9 +111,9 @@ async function seedDatabase() {
         const categoryId = uuidv4();
         categoryIds[category.name] = categoryId;
         
-        await run(
+        await client.query(
           `INSERT INTO categories (id, user_id, name, fund_id, color_class)
-           VALUES (?, ?, ?, ?, ?)`,
+           VALUES ($1, $2, $3, $4, $5)`,
           [categoryId, userId, category.name, fundId, category.color]
         );
       }
@@ -118,9 +130,9 @@ async function seedDatabase() {
     ];
     
     for (const income of incomes) {
-      await run(
+      await client.query(
         `INSERT INTO incomes (id, user_id, budget_year_id, name, amount, source, date, month, year)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
         [uuidv4(), userId, budgetYearId, income.name, income.amount, income.source, income.date, income.month, currentYear]
       );
     }
@@ -145,9 +157,9 @@ async function seedDatabase() {
       const fundId = fundIds[category.fund];
       
       if (categoryId && fundId) {
-        await run(
+        await client.query(
           `INSERT INTO expenses (id, user_id, budget_year_id, category_id, fund_id, name, amount, date)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
           [uuidv4(), userId, budgetYearId, categoryId, fundId, expense.name, expense.amount, expense.date]
         );
       }
@@ -162,9 +174,9 @@ async function seedDatabase() {
     ];
     
     for (const tithe of tithes) {
-      await run(
+      await client.query(
         `INSERT INTO tithe_given (id, user_id, description, amount, date, note)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+         VALUES ($1, $2, $3, $4, $5, $6)`,
         [uuidv4(), userId, tithe.description, tithe.amount, tithe.date, tithe.note]
       );
     }
@@ -179,9 +191,9 @@ async function seedDatabase() {
     ];
     
     for (const debt of debts) {
-      await run(
+      await client.query(
         `INSERT INTO debts (id, user_id, description, amount, type, note)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+         VALUES ($1, $2, $3, $4, $5, $6)`,
         [uuidv4(), userId, debt.description, debt.amount, debt.type, debt.note]
       );
     }
@@ -190,16 +202,16 @@ async function seedDatabase() {
     
     // Create sample tasks
     const tasks = [
-      { description: 'לבדוק ביטוח רכב', important: 1 },
-      { description: 'לתזמן פגישה עם רואה חשבון', important: 0 },
-      { description: 'לעדכן פרטי בנק', important: 0 },
-      { description: 'לשלם ארנונה', important: 1 }
+      { description: 'לבדוק ביטוח רכב', important: true },
+      { description: 'לתזמן פגישה עם רואה חשבון', important: false },
+      { description: 'לעדכן פרטי בנק', important: false },
+      { description: 'לשלם ארנונה', important: true }
     ];
     
     for (const task of tasks) {
-      await run(
+      await client.query(
         `INSERT INTO tasks (id, user_id, description, important)
-         VALUES (?, ?, ?, ?)`,
+         VALUES ($1, $2, $3, $4)`,
         [uuidv4(), userId, task.description, task.important]
       );
     }
@@ -208,9 +220,9 @@ async function seedDatabase() {
     
     // Create sample asset snapshot
     const snapshotId = uuidv4();
-    await run(
+    await client.query(
       `INSERT INTO asset_snapshots (id, user_id, date, note)
-       VALUES (?, ?, ?, ?)`,
+       VALUES ($1, $2, $3, $4)`,
       [snapshotId, userId, `${currentYear}-05-01`, 'תמונת מצב ראשונית']
     );
     
@@ -226,9 +238,9 @@ async function seedDatabase() {
     ];
     
     for (const detail of assetDetails) {
-      await run(
+      await client.query(
         `INSERT INTO asset_details (id, snapshot_id, asset_type, asset_name, amount, category)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+         VALUES ($1, $2, $3, $4, $5, $6)`,
         [uuidv4(), snapshotId, detail.type, detail.name, detail.amount, detail.category]
       );
     }
@@ -242,9 +254,9 @@ async function seedDatabase() {
     ];
     
     for (const setting of settings) {
-      await run(
+      await client.query(
         `INSERT INTO system_settings (id, user_id, setting_key, setting_value, data_type)
-         VALUES (?, ?, ?, ?, ?)`,
+         VALUES ($1, $2, $3, $4, $5)`,
         [uuidv4(), userId, setting.key, setting.value, setting.type]
       );
     }
@@ -259,6 +271,8 @@ async function seedDatabase() {
   } catch (error) {
     console.error('❌ שגיאה בזריעת נתונים:', error);
     throw error;
+  } finally {
+    client.release();
   }
 }
 
@@ -267,10 +281,12 @@ if (require.main === module) {
   seedDatabase()
     .then(() => {
       console.log('✅ זריעה הושלמה');
+      pool.end();
       process.exit(0);
     })
     .catch((error) => {
       console.error('❌ שגיאה בזריעה:', error);
+      pool.end();
       process.exit(1);
     });
 }

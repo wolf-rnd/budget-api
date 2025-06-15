@@ -19,6 +19,7 @@ const assetsRoutes = require('./routes/assets');
 const dashboardRoutes = require('./routes/dashboard');
 
 const { errorHandler } = require('./middleware/errorHandler');
+const { authenticateToken } = require('./middleware/auth');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -66,27 +67,16 @@ app.get('/health', (req, res) => {
 
 // API Routes
 app.use('/api/auth', authRoutes);
-// app.use('/api/budget-years', authenticateToken, budgetYearsRoutes);
-// app.use('/api/funds', authenticateToken, fundsRoutes);
-// app.use('/api/categories', authenticateToken, categoriesRoutes);
-// app.use('/api/incomes', authenticateToken, incomesRoutes);
-// app.use('/api/expenses', authenticateToken, expensesRoutes);
-// app.use('/api/tithe', authenticateToken, titheRoutes);
-// app.use('/api/debts', authenticateToken, debtsRoutes);
-// app.use('/api/tasks', authenticateToken, tasksRoutes);
-// app.use('/api/assets', authenticateToken, assetsRoutes);
-// app.use('/api/dashboard', authenticateToken, dashboardRoutes);
-
-app.use('/api/budget-years', budgetYearsRoutes);
-app.use('/api/funds',  fundsRoutes);
-app.use('/api/categories', categoriesRoutes);
-app.use('/api/incomes',  incomesRoutes);
-app.use('/api/expenses', expensesRoutes);
-app.use('/api/tithe', titheRoutes);
-app.use('/api/debts', debtsRoutes);
-app.use('/api/tasks', tasksRoutes);
-app.use('/api/assets', assetsRoutes);
-app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/budget-years', authenticateToken, budgetYearsRoutes);
+app.use('/api/funds', authenticateToken, fundsRoutes);
+app.use('/api/categories', authenticateToken, categoriesRoutes);
+app.use('/api/incomes', authenticateToken, incomesRoutes);
+app.use('/api/expenses', authenticateToken, expensesRoutes);
+app.use('/api/tithe', authenticateToken, titheRoutes);
+app.use('/api/debts', authenticateToken, debtsRoutes);
+app.use('/api/tasks', authenticateToken, tasksRoutes);
+app.use('/api/assets', authenticateToken, assetsRoutes);
+app.use('/api/dashboard', authenticateToken, dashboardRoutes);
 
 // 404 handler
 app.use('*', (req, res) => {

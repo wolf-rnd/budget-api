@@ -1,103 +1,121 @@
-const fs = require('fs');
-const path = require('path');
-const { query, run, close } = require('../config/database');
+const { Pool } = require('pg');
 const { v4: uuidv4 } = require('uuid');
 
+// יצירת חיבור ישיר למסד הנתונים
+const pool = new Pool({
+  host: process.env.DB_HOST,
+  port: process.env.DB_PORT || 5432,
+  database: process.env.DB_NAME,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+});
+
 async function runMigrations() {
+  const client = await pool.connect();
+  
   try {
-    console.log('🚀 מתחיל הרצת מיגרציות SQLite...');
+    console.log('🚀 מתחיל הרצת מיגרציות PostgreSQL/Supabase...');
     
     // Create migrations table if it doesn't exist
-    await run(`
+    await client.query(`
       CREATE TABLE IF NOT EXISTS migrations (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         filename TEXT NOT NULL UNIQUE,
-        executed_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
     
+    // Check if initial migration already exists
+    const existingMigration = await client.query(
+      'SELECT filename FROM migrations WHERE filename = $1',
+      ['001_initial_schema.sql']
+    );
+    
+    if (existingMigration.rows.length > 0) {
+      console.log('✅ מיגרציה ראשונית כבר קיימת, מדלג...');
+      return;
+    }
+    
     console.log('📝 יוצר מיגרציה ראשונית...');
     
-    // Create all tables
+    // Create all tables with PostgreSQL syntax
     const initialMigration = `
--- Initial migration: Create complete database schema
+-- Initial migration: Create complete database schema for PostgreSQL/Supabase
 -- תאריך: ${new Date().toISOString().split('T')[0]}
+
+-- Enable UUID extension
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- טבלת משתמשים
 CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY,
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     email TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
     first_name TEXT NOT NULL,
     last_name TEXT NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- טבלת שנות תקציב
 CREATE TABLE IF NOT EXISTS budget_years (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     start_date DATE NOT NULL,
     end_date DATE NOT NULL,
-    is_active BOOLEAN DEFAULT 0,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    is_active BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- טבלת קופות
 CREATE TABLE IF NOT EXISTS funds (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     type TEXT NOT NULL CHECK (type IN ('monthly', 'annual', 'savings')),
     level INTEGER NOT NULL CHECK (level IN (1, 2, 3)),
-    include_in_budget BOOLEAN DEFAULT 1,
+    include_in_budget BOOLEAN DEFAULT TRUE,
     display_order INTEGER DEFAULT 0,
-    is_active BOOLEAN DEFAULT 1,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(user_id, name)
 );
 
 -- טבלת תקציבי קופות
 CREATE TABLE IF NOT EXISTS fund_budgets (
-    id TEXT PRIMARY KEY,
-    fund_id TEXT NOT NULL,
-    budget_year_id TEXT NOT NULL,
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    fund_id UUID NOT NULL REFERENCES funds(id) ON DELETE CASCADE,
+    budget_year_id UUID NOT NULL REFERENCES budget_years(id) ON DELETE CASCADE,
     amount DECIMAL(12,2) NOT NULL DEFAULT 0,
     amount_given DECIMAL(12,2) DEFAULT 0,
     spent DECIMAL(12,2) DEFAULT 0,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (fund_id) REFERENCES funds(id) ON DELETE CASCADE,
-    FOREIGN KEY (budget_year_id) REFERENCES budget_years(id) ON DELETE CASCADE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(fund_id, budget_year_id)
 );
 
 -- טבלת קטגוריות
 CREATE TABLE IF NOT EXISTS categories (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
-    fund_id TEXT NOT NULL,
+    fund_id UUID NOT NULL REFERENCES funds(id) ON DELETE CASCADE,
     color_class TEXT,
-    is_active BOOLEAN DEFAULT 1,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-    FOREIGN KEY (fund_id) REFERENCES funds(id) ON DELETE CASCADE,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(user_id, name)
 );
 
 -- טבלת הכנסות
 CREATE TABLE IF NOT EXISTS incomes (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
-    budget_year_id TEXT NOT NULL,
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    budget_year_id UUID NOT NULL REFERENCES budget_years(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     amount DECIMAL(12,2) NOT NULL,
     source TEXT,
@@ -105,105 +123,93 @@ CREATE TABLE IF NOT EXISTS incomes (
     month INTEGER NOT NULL CHECK (month BETWEEN 1 AND 12),
     year INTEGER NOT NULL,
     note TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-    FOREIGN KEY (budget_year_id) REFERENCES budget_years(id) ON DELETE CASCADE
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- טבלת הוצאות
 CREATE TABLE IF NOT EXISTS expenses (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
-    budget_year_id TEXT NOT NULL,
-    category_id TEXT NOT NULL,
-    fund_id TEXT NOT NULL,
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    budget_year_id UUID NOT NULL REFERENCES budget_years(id) ON DELETE CASCADE,
+    category_id UUID NOT NULL REFERENCES categories(id) ON DELETE RESTRICT,
+    fund_id UUID NOT NULL REFERENCES funds(id) ON DELETE RESTRICT,
     name TEXT NOT NULL,
     amount DECIMAL(12,2) NOT NULL,
     date DATE NOT NULL,
     note TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-    FOREIGN KEY (budget_year_id) REFERENCES budget_years(id) ON DELETE CASCADE,
-    FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE RESTRICT,
-    FOREIGN KEY (fund_id) REFERENCES funds(id) ON DELETE RESTRICT
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- טבלת מעשרות
 CREATE TABLE IF NOT EXISTS tithe_given (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     description TEXT NOT NULL,
     amount DECIMAL(12,2) NOT NULL,
     date DATE NOT NULL,
     note TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- טבלת חובות
 CREATE TABLE IF NOT EXISTS debts (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     description TEXT NOT NULL,
     amount DECIMAL(12,2) NOT NULL,
     type TEXT NOT NULL CHECK (type IN ('owed_to_me', 'i_owe')),
     note TEXT,
-    is_paid BOOLEAN DEFAULT 0,
+    is_paid BOOLEAN DEFAULT FALSE,
     paid_date DATE,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- טבלת משימות
 CREATE TABLE IF NOT EXISTS tasks (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     description TEXT NOT NULL,
-    completed BOOLEAN DEFAULT 0,
-    important BOOLEAN DEFAULT 0,
-    completed_at DATETIME,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    completed BOOLEAN DEFAULT FALSE,
+    important BOOLEAN DEFAULT FALSE,
+    completed_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- טבלת תמונות מצב נכסים
 CREATE TABLE IF NOT EXISTS asset_snapshots (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     date DATE NOT NULL,
     note TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- טבלת פירוט נכסים
 CREATE TABLE IF NOT EXISTS asset_details (
-    id TEXT PRIMARY KEY,
-    snapshot_id TEXT NOT NULL,
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    snapshot_id UUID NOT NULL REFERENCES asset_snapshots(id) ON DELETE CASCADE,
     asset_type TEXT NOT NULL,
     asset_name TEXT NOT NULL,
     amount DECIMAL(12,2) NOT NULL,
     category TEXT NOT NULL CHECK (category IN ('asset', 'liability')),
-    FOREIGN KEY (snapshot_id) REFERENCES asset_snapshots(id) ON DELETE CASCADE,
     UNIQUE(snapshot_id, asset_type)
 );
 
 -- טבלת הגדרות מערכת
 CREATE TABLE IF NOT EXISTS system_settings (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     setting_key TEXT NOT NULL,
     setting_value TEXT NOT NULL,
     data_type TEXT DEFAULT 'string' CHECK (data_type IN ('string', 'number', 'boolean', 'json')),
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(user_id, setting_key)
 );
 
@@ -236,17 +242,11 @@ CREATE INDEX IF NOT EXISTS idx_system_settings_user_id ON system_settings(user_i
     `;
     
     // Execute the migration
-    const statements = initialMigration.split(';').filter(stmt => stmt.trim());
-    
-    for (const statement of statements) {
-      if (statement.trim()) {
-        await run(statement.trim());
-      }
-    }
+    await client.query(initialMigration);
     
     // Mark migration as executed
-    await run(
-      'INSERT OR IGNORE INTO migrations (filename) VALUES (?)',
+    await client.query(
+      'INSERT INTO migrations (filename) VALUES ($1)',
       ['001_initial_schema.sql']
     );
     
@@ -255,16 +255,25 @@ CREATE INDEX IF NOT EXISTS idx_system_settings_user_id ON system_settings(user_i
     
   } catch (error) {
     console.error('❌ שגיאה בהרצת מיגרציות:', error);
-    process.exit(1);
+    throw error;
+  } finally {
+    client.release();
   }
 }
 
 // Run migrations if this file is executed directly
 if (require.main === module) {
-  runMigrations().then(() => {
-    console.log('✅ מיגרציות הושלמו');
-    process.exit(0);
-  });
+  runMigrations()
+    .then(() => {
+      console.log('✅ מיגרציות הושלמו');
+      pool.end();
+      process.exit(0);
+    })
+    .catch((error) => {
+      console.error('❌ שגיאה במיגרציות:', error);
+      pool.end();
+      process.exit(1);
+    });
 }
 
 module.exports = { runMigrations };
