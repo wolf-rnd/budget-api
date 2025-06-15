@@ -2,6 +2,13 @@ require('dotenv').config();
 const { Pool } = require('pg');
 const { v4: uuidv4 } = require('uuid');
 
+console.log('🔍 בודק משתני סביבה...');
+console.log('DB_HOST:', process.env.DB_HOST);
+console.log('DB_PORT:', process.env.DB_PORT);
+console.log('DB_NAME:', process.env.DB_NAME);
+console.log('DB_USER:', process.env.DB_USER);
+console.log('DB_PASSWORD:', process.env.DB_PASSWORD ? '***מוגדר***' : '❌לא מוגדר');
+
 // יצירת חיבור ישיר למסד הנתונים
 const pool = new Pool({
   host: process.env.DB_HOST,
@@ -13,11 +20,14 @@ const pool = new Pool({
 });
 
 async function runMigrations() {
-  const client = await pool.connect();
+  let client;
   
   try {
     console.log('🚀 מתחיל הרצת מיגרציות PostgreSQL/Supabase...');
-    console.log(`🔗 מתחבר לשרת: ${process.env.DB_HOST}:${process.env.DB_PORT}`);
+    console.log(`🔗 מנסה להתחבר לשרת: ${process.env.DB_HOST}:${process.env.DB_PORT}`);
+    
+    client = await pool.connect();
+    console.log('✅ התחברות למסד הנתונים הצליחה!');
     
     // Create migrations table if it doesn't exist
     await client.query(`
@@ -243,8 +253,12 @@ CREATE INDEX IF NOT EXISTS idx_asset_details_snapshot_id ON asset_details(snapsh
 CREATE INDEX IF NOT EXISTS idx_system_settings_user_id ON system_settings(user_id);
     `;
     
+    console.log('⚙️ מבצע יצירת טבלאות...');
+    
     // Execute the migration
     await client.query(initialMigration);
+    
+    console.log('📝 מסמן מיגרציה כמבוצעת...');
     
     // Mark migration as executed
     await client.query(
@@ -257,9 +271,15 @@ CREATE INDEX IF NOT EXISTS idx_system_settings_user_id ON system_settings(user_i
     
   } catch (error) {
     console.error('❌ שגיאה בהרצת מיגרציות:', error);
+    console.error('פרטי השגיאה:', error.message);
+    if (error.code) {
+      console.error('קוד שגיאה:', error.code);
+    }
     throw error;
   } finally {
-    client.release();
+    if (client) {
+      client.release();
+    }
   }
 }
 
