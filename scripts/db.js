@@ -16,7 +16,7 @@ const pool = new Pool({
   database: process.env.DB_NAME,
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+ssl: { rejectUnauthorized: false },
   connectionTimeoutMillis: 5000, // חיבור יפול אחרי 5 שניות אם לא מצליח
 });
 
