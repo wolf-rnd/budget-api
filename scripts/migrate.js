@@ -1,11 +1,23 @@
 const { pool } = require('./db');
 
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('🔴 שגיאת Promise שלא טופלה:', reason);
+});
+
 async function runMigrations() {
   let client;
 
   try {
     console.log('🚀 מתחיל הרצת מיגרציות PostgreSQL/Supabase...');
-    client = await pool.connect();
+    try {
+  console.log('🔌 מנסה להתחבר ל־DB...');
+  client = await pool.connect();
+  console.log('✅ התחברות הצליחה!');
+} catch (err) {
+  console.error('❌ שגיאה בהתחברות למסד:', err.message);
+  throw err;
+}
+
     console.log('✅ התחברות למסד הנתונים הצליחה!');
 
     // Create migrations table if not exists
